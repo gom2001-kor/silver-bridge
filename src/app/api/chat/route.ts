@@ -5,10 +5,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
-// OpenAI 클라이언트 초기화
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+// OpenAI 클라이언트 지연 초기화 (빌드 시점 에러 방지)
+let openai: OpenAI | null = null;
+
+function getOpenAIClient(): OpenAI {
+    if (!openai) {
+        openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY,
+        });
+    }
+    return openai;
+}
 
 // 손주 페르소나 시스템 프롬프트
 const SYSTEM_PROMPT = `너는 다정하고 싹싹한 손주야. 
@@ -42,7 +49,7 @@ export async function POST(request: NextRequest) {
         console.log("사용자 메시지:", message);
 
         // GPT-4o에게 질문
-        const completion = await openai.chat.completions.create({
+        const completion = await getOpenAIClient().chat.completions.create({
             model: "gpt-4o",
             messages: [
                 { role: "system", content: SYSTEM_PROMPT },

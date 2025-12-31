@@ -5,10 +5,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
-// OpenAI 클라이언트 초기화
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+// OpenAI 클라이언트 지연 초기화 (빌드 시점 에러 방지)
+let openai: OpenAI | null = null;
+
+function getOpenAIClient(): OpenAI {
+    if (!openai) {
+        openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY,
+        });
+    }
+    return openai;
+}
 
 // 텍스트 길이 제한 (OpenAI TTS 제한: 4096자)
 const MAX_TEXT_LENGTH = 4000;
@@ -73,7 +80,7 @@ export async function POST(request: NextRequest) {
         console.log(`TTS 요청: ${cleanText.substring(0, 50)}... (${cleanText.length}자, 음성: ${selectedVoice})`);
 
         // OpenAI TTS 호출
-        const mp3 = await openai.audio.speech.create({
+        const mp3 = await getOpenAIClient().audio.speech.create({
             model: "tts-1",
             voice: selectedVoice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer",
             input: cleanText,

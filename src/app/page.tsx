@@ -65,8 +65,14 @@ export default function Home() {
 
   // ===== Refs =====
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const statusRef = useRef<Status>(status);
 
-  // ===== Web Speech API 초기화 =====
+  // 상태 ref 동기화
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  // ===== Web Speech API 초기화 (마운트 시 1회만 실행) =====
   useEffect(() => {
     // 브라우저 호환성 처리 (Chrome: webkitSpeechRecognition)
     const windowWithSpeech = window as typeof window & {
@@ -86,12 +92,13 @@ export default function Home() {
       recognition.onresult = (event: SpeechRecognitionEvent) => {
         const text = event.results[0][0].transcript;
         setTranscript(text);
-        handleSendMessage(text); // AI에게 전송
+        // handleSendMessage는 아래에서 정의되므로 직접 fetch 호출
+        handleSendMessageDirect(text);
       };
 
       // 인식 종료 시
       recognition.onend = () => {
-        if (status === "listening") {
+        if (statusRef.current === "listening") {
           setStatus("thinking");
         }
       };
@@ -104,8 +111,74 @@ export default function Home() {
 
       recognitionRef.current = recognition;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ===== AI에게 메시지 전송 (useEffect 내에서 호출용) =====
+  const handleSendMessageDirect = async (message: string) => {
+    setStatus("thinking");
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+
+      const data = await res.json();
+
+      if (data.reply) {
+        setResponse(data.reply);
+        speakDirect(data.reply); // TTS로 읽어주기
+      } else {
+        setResponse(data.error || "응답을 받지 못했어요.");
+        setStatus("idle");
+      }
+    } catch (error) {
+      console.error("API 오류:", error);
+      setResponse("인터넷 연결을 확인해주세요.");
+      setStatus("idle");
+    }
+  };
+
+  // ===== TTS (간단 버전 - useEffect 내에서 호출용) =====
+  const speakDirect = async (text: string) => {
+    setStatus("speaking");
+    try {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!response.ok) throw new Error("TTS 요청 실패");
+
+      const audioBlob = await response.blob();
+      if (audioBlob.size === 0) throw new Error("빈 오디오 데이터");
+
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+
+      audio.onended = () => {
+        setStatus("idle");
+        URL.revokeObjectURL(audioUrl);
+      };
+      audio.onerror = () => {
+        setStatus("idle");
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      await audio.play();
+    } catch (error) {
+      console.error("TTS 오류:", error);
+      // 폴백: 브라우저 TTS
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "ko-KR";
+      utterance.rate = 0.9;
+      utterance.onend = () => setStatus("idle");
+      window.speechSynthesis.speak(utterance);
+    }
+  };
 
   // ===== 마이크 버튼 클릭 핸들러 =====
   const handleMicClick = () => {
