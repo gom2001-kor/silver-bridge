@@ -61,16 +61,45 @@ export default function Home() {
   // ===== 상태 관리 =====
   const [status, setStatus] = useState<Status>("idle");
   const [transcript, setTranscript] = useState(""); // 인식된 텍스트
+  const [interimTranscript, setInterimTranscript] = useState(""); // 중간 결과
   const [response, setResponse] = useState(""); // AI 응답
 
   // ===== Refs =====
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const statusRef = useRef<Status>(status);
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const finalTranscriptRef = useRef<string>("");
+
+  // 침묵 감지 시간 (3초)
+  const SILENCE_TIMEOUT = 3000;
 
   // 상태 ref 동기화
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
+
+  // ===== 침묵 타이머 정리 =====
+  const clearSilenceTimer = () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  };
+
+  // ===== 음성 인식 완료 후 즉시 메시지 전송 =====
+  const finishRecognitionAndSend = (text: string) => {
+    clearSilenceTimer();
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+    setInterimTranscript("");
+    if (text.trim()) {
+      setTranscript(text.trim());
+      handleSendMessageDirect(text.trim());
+    } else {
+      setStatus("idle");
+    }
+  };
 
   // ===== Web Speech API 초기화 (마운트 시 1회만 실행) =====
   useEffect(() => {
@@ -85,34 +114,78 @@ export default function Home() {
     if (SpeechRecognitionClass) {
       const recognition = new SpeechRecognitionClass();
       recognition.lang = "ko-KR"; // 한국어
-      recognition.continuous = false; // 한 문장씩
-      recognition.interimResults = false; // 최종 결과만
+      recognition.continuous = true; // 연속 인식 (중간에 끊기지 않음)
+      recognition.interimResults = true; // 중간 결과 표시
 
       // 음성 인식 결과 처리
       recognition.onresult = (event: SpeechRecognitionEvent) => {
-        const text = event.results[0][0].transcript;
-        setTranscript(text);
-        // handleSendMessage는 아래에서 정의되므로 직접 fetch 호출
-        handleSendMessageDirect(text);
+        clearSilenceTimer();
+
+        let finalText = "";
+        let interimText = "";
+
+        // 모든 결과 처리
+        for (let i = 0; i < event.results.length; i++) {
+          const result = event.results[i];
+          if (result.isFinal) {
+            finalText += result[0].transcript;
+          } else {
+            interimText += result[0].transcript;
+          }
+        }
+
+        // 최종 결과 저장
+        finalTranscriptRef.current = finalText;
+
+        // 화면에 표시
+        setTranscript(finalText);
+        setInterimTranscript(interimText);
+
+        // 3초간 추가 입력 없으면 인식 종료 및 메시지 전송
+        silenceTimerRef.current = setTimeout(() => {
+          const textToSend = finalText || interimText;
+          if (textToSend.trim() && statusRef.current === "listening") {
+            finishRecognitionAndSend(textToSend);
+          }
+        }, SILENCE_TIMEOUT);
       };
 
-      // 인식 종료 시
+      // 인식 종료 시 (수동 중지 또는 에러)
       recognition.onend = () => {
+        clearSilenceTimer();
         if (statusRef.current === "listening") {
-          setStatus("thinking");
+          // 인식이 예기치 않게 종료된 경우, 있는 텍스트로 전송
+          const textToSend = finalTranscriptRef.current;
+          if (textToSend.trim()) {
+            setTranscript(textToSend.trim());
+            setInterimTranscript("");
+            handleSendMessageDirect(textToSend.trim());
+          } else {
+            setStatus("idle");
+          }
         }
       };
 
       // 에러 처리
       recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
         console.error("음성 인식 오류:", event.error);
-        setStatus("idle");
+        clearSilenceTimer();
+        // no-speech 에러는 무시 (타이머로 처리)
+        if (event.error !== "no-speech") {
+          setStatus("idle");
+        }
       };
 
       recognitionRef.current = recognition;
     }
+
+    // 클린업
+    return () => {
+      clearSilenceTimer();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
 
   // ===== AI에게 메시지 전송 (useEffect 내에서 호출용) =====
   const handleSendMessageDirect = async (message: string) => {
@@ -199,7 +272,9 @@ export default function Home() {
   const startListening = () => {
     if (recognitionRef.current) {
       setTranscript("");
+      setInterimTranscript("");
       setResponse("");
+      finalTranscriptRef.current = "";
       setStatus("listening");
       recognitionRef.current.start();
     } else {
@@ -419,12 +494,18 @@ export default function Home() {
       </p>
 
       {/* ===== 대화 내용 표시 (있을 때만) ===== */}
-      {(transcript || response) && (
+      {(transcript || interimTranscript || response) && (
         <div className="mt-8 w-full max-w-md px-4">
-          {transcript && (
+          {/* 현재 인식 중인 텍스트 (중간 결과 포함) */}
+          {(transcript || interimTranscript) && (
             <div className="bg-silver-bg-light rounded-silver p-4 mb-3">
               <p className="text-sm text-silver-gray-light mb-1">내가 한 말:</p>
-              <p className="text-lg text-silver-black">{transcript}</p>
+              <p className="text-lg text-silver-black">
+                {transcript}
+                {interimTranscript && (
+                  <span className="text-silver-gray-light">{interimTranscript}</span>
+                )}
+              </p>
             </div>
           )}
           {response && (

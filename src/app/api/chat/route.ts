@@ -17,13 +17,53 @@ function getOpenAIClient(): OpenAI {
     return openai;
 }
 
-// 손주 페르소나 시스템 프롬프트
-const SYSTEM_PROMPT = `너는 다정하고 싹싹한 손주야. 
+// 손주 페르소나 시스템 프롬프트 (기본)
+const BASE_SYSTEM_PROMPT = `너는 다정하고 싹싹한 손주야. 
 할머니/할아버지가 이해하기 쉽게 짧고 친절하게 대답해.
 반말과 존댓말을 자연스럽게 섞어서 말해.
 어려운 단어는 쉬운 말로 바꿔서 설명해.
 답변은 2-3문장으로 짧게 해.
 항상 밝고 긍정적인 분위기로 대화해.`;
+
+// 현재 시간 정보 생성 (한국 시간 기준)
+function getCurrentTimeContext(): string {
+    const now = new Date();
+
+    // 한국 시간대로 변환
+    const options: Intl.DateTimeFormatOptions = {
+        timeZone: 'Asia/Seoul',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        weekday: 'long',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+    };
+
+    const dateStr = now.toLocaleDateString('ko-KR', options);
+    const year = now.toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric' });
+    const month = now.toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric' });
+    const day = now.toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', day: 'numeric' });
+    const weekday = now.toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', weekday: 'long' });
+    const time = now.toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: true });
+
+    return `[현재 시간 정보 - 반드시 이 정보를 사용해서 답변해]
+- 현재 연도: ${year}
+- 현재 날짜: ${month} ${day}
+- 오늘 요일: ${weekday}
+- 현재 시각: ${time}
+- 전체: ${dateStr}
+
+날짜, 시간, 요일에 대한 질문에는 위 정보를 정확하게 사용해서 답변해.`;
+}
+
+// 실시간 정보가 포함된 시스템 프롬프트 생성
+function getSystemPromptWithContext(): string {
+    return `${BASE_SYSTEM_PROMPT}
+
+${getCurrentTimeContext()}`;
+}
 
 export async function POST(request: NextRequest) {
     try {
@@ -52,7 +92,7 @@ export async function POST(request: NextRequest) {
         const completion = await getOpenAIClient().chat.completions.create({
             model: "gpt-4o",
             messages: [
-                { role: "system", content: SYSTEM_PROMPT },
+                { role: "system", content: getSystemPromptWithContext() },
                 { role: "user", content: message },
             ],
             max_tokens: 200,
